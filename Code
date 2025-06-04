@@ -1,0 +1,89 @@
+import streamlit as st
+import praw
+import nltk
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import re
+from collections import defaultdict
+from dotenv import load_dotenv
+import os
+
+# Load environment variables
+load_dotenv()
+
+# Download VADER lexicon
+nltk.download('vader_lexicon')
+vader = SentimentIntensityAnalyzer()
+
+# Reddit API configuration
+reddit = praw.Reddit(
+    client_id='cvOq9IxpNwqeTe6zHznExQ',
+    client_secret='7u4Avrsj-PKFoMQeNyLOw4MsaaltrQ',
+    user_agent='StockSentimentAnalyzer by LargePraline2329'
+)
+
+# Streamlit UI
+st.set_page_config(page_title="Reddit Stock Sentiment", layout="wide")
+st.title("📈 Reddit Stock Sentiment Analyzer")
+st.markdown("Analyze sentiment for your favorite stocks based on Reddit posts.")
+
+# User input
+subreddit_name = st.text_input("Subreddit", "wallstreetbets")
+tickers_input = st.text_input("Comma-Separated Stock Tickers", "AAPL,TSLA,GOOG,AMZN,NVDA")
+limit = st.slider("Number of Posts to Analyze", 50, 500, 200, 50)
+
+# Process tickers
+tickers = [t.strip().upper() for t in tickers_input.split(',')]
+ticker_pattern = re.compile(r'\b(' + '|'.join(tickers) + r')\b')
+
+# Fetch Reddit posts
+def fetch_reddit_posts(subreddit_name, limit):
+    subreddit = reddit.subreddit(subreddit_name)
+    return [(post.title + ' ' + (post.selftext or ''), post.url) for post in subreddit.hot(limit=limit)]
+
+# Analyze sentiment
+def analyze_sentiment(posts):
+    ticker_sentiment = defaultdict(list)
+    ticker_posts = defaultdict(list)
+
+    for content, url in posts:
+        found_tickers = ticker_pattern.findall(content.upper())
+        sentiment = vader.polarity_scores(content)['compound']
+        for ticker in found_tickers:
+            ticker_sentiment[ticker].append(sentiment)
+            ticker_posts[ticker].append((content, sentiment, url))
+
+    return ticker_sentiment, ticker_posts
+
+# Get sentiment label
+def sentiment_label(score):
+    return "Positive" if score > 0.05 else "Negative" if score < -0.05 else "Neutral"
+
+# Display results
+def display_results(ticker_sentiment):
+    results = []
+    for ticker, scores in ticker_sentiment.items():
+        avg = sum(scores) / len(scores) if scores else 0
+        label = sentiment_label(avg)
+        results.append((ticker, round(avg, 3), len(scores), label))
+    return results
+
+# Run on button click
+if st.button("Run Sentiment Analysis"):
+    with st.spinner("Fetching and analyzing Reddit posts..."):
+        posts = fetch_reddit_posts(subreddit_name, limit)
+        ticker_sentiment, ticker_posts = analyze_sentiment(posts)
+        results = display_results(ticker_sentiment)
+
+    if results:
+        st.subheader("📊 Sentiment Summary Table")
+        st.table(results)
+
+        st.subheader("🔍 Reddit Posts by Stock")
+
+        for ticker in tickers:
+            if ticker in ticker_posts:
+                st.markdown(f"### {ticker}")
+                for i, (text, score, url) in enumerate(ticker_posts[ticker][:3]):
+                    with st.expander(f"Post #{i+1} — Sentiment: {score:.3f}"):
+                        st.write(text[:500] + ("..." if len(text) > 500 else ""))
+                        st.markdown(f"[🔗 Open Reddit Post]({url})", unsafe_allow_html=True)
